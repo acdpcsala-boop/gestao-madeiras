@@ -125,7 +125,7 @@ if maquinas:
                             )
 
                             response = client.models.generate_content(
-                                model="gemini-1.5-flash", contents=prompt
+                                model="gemini-3.6-flash", contents=prompt
                             )
 
                             st.markdown("---")
