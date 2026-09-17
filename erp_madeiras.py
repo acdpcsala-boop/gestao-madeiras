@@ -3,7 +3,6 @@ import pandas as pd
 from google import genai
 from streamlit_gsheets import GSheetsConnection
 import os
-import re
 
 # -----------------------------------------------------------------------------
 # Configuração da Página
@@ -43,7 +42,6 @@ if not st.session_state.usuario_logado:
 # ÁREA LOGADA DO SISTEMA ERP
 # =============================================================================
 
-# Barra Lateral
 st.sidebar.title(f"👤 Olá, {st.session_state.get('nome_usuario', 'Alexandre')}")
 if st.sidebar.button("🚪 Sair"):
     st.session_state.usuario_logado = False
@@ -53,15 +51,20 @@ st.sidebar.markdown("---")
 st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 
 # -----------------------------------------------------------------------------
-# Configuração das Conexões (Tratamento Robusto da URL)
+# Configuração das Conexões (URL Direta para evitar erros nos Secrets)
 # -----------------------------------------------------------------------------
-raw_url = st.secrets.get("SPREADSHEET_URL", "").strip()
+# COLE AQUI O LINK DA SUA PLANILHA ENTRE AS ASPAS:
+URL_PLANILHA_DIRETA = "https://docs.google.com/spreadsheets/d/1M6pESyTnevYJvt1fjsOpJ36rNmLNzvX5WiUySLL61qo/edit?usp=sharing"
 
-# Extrai apenas a estrutura base da URL até o ID da planilha, ignorando parâmetros como /edit#gid=0
-match = re.search(r"(https://docs\.google\.com/spreadsheets/d/[a-zA-Z0-9-_]+)", raw_url)
-spreadsheet_url = match.group(1) if match else raw_url
+# Limpeza e extração da URL
+raw_url_clean = str(URL_PLANILHA_DIRETA).replace("\n", "").replace("\r", "").strip()
+if "/edit" in raw_url_clean:
+    spreadsheet_url = raw_url_clean.split("/edit")[0]
+else:
+    spreadsheet_url = raw_url_clean
 
-gemini_api_key = st.secrets.get("GEMINI_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY")
+raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
+gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
 
 client = None
 if gemini_api_key:
@@ -70,7 +73,6 @@ if gemini_api_key:
     except Exception as e:
         st.error(f"Erro ao inicializar Gemini: {e}")
 
-# Conexão com Google Sheets
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
@@ -125,7 +127,6 @@ with aba_estoque:
         st.subheader("Itens Cadastrados")
         st.dataframe(df_estoque, use_container_width=True)
         
-        # Gerenciamento de Itens (Editar/Excluir)
         if not df_estoque.empty:
             with st.expander("🛠️ Gerenciar / Editar / Excluir Item"):
                 lista_itens = [f"{idx}: {row['Espécie']} ({row['Tipo']})" for idx, row in df_estoque.iterrows()]
@@ -176,7 +177,7 @@ with aba_estoque:
                     st.warning("Preencha o nome da espécie.")
 
 # -----------------------------------------------------------------------------
-# ABA 2: Máquinas & Ferramentas (Com Edição e Exclusão)
+# ABA 2: Máquinas & Ferramentas
 # -----------------------------------------------------------------------------
 with aba_maquinas:
     st.header("Status e Manutenção de Equipamentos")
