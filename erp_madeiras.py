@@ -51,17 +51,10 @@ st.sidebar.markdown("---")
 st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 
 # -----------------------------------------------------------------------------
-# Configuração das Conexões (URL Direta para evitar erros nos Secrets)
+# Configuração do ID da Planilha e Conexões
 # -----------------------------------------------------------------------------
-# COLE AQUI O LINK DA SUA PLANILHA ENTRE AS ASPAS:
-URL_PLANILHA_DIRETA = "https://docs.google.com/spreadsheets/d/1M6pESyTnevYJvt1fjsOpJ36rNmLNzvX5WiUySLL61qo/edit?usp=sharing"
-
-# Limpeza e extração da URL
-raw_url_clean = str(URL_PLANILHA_DIRETA).replace("\n", "").replace("\r", "").strip()
-if "/edit" in raw_url_clean:
-    spreadsheet_url = raw_url_clean.split("/edit")[0]
-else:
-    spreadsheet_url = raw_url_clean
+SPREADSHEET_ID = "1M6pESyTnevYJvt1sOpJ36rnMLNzvX5WiUySLL61qo"
+SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
 
 raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
 gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
@@ -73,32 +66,40 @@ if gemini_api_key:
     except Exception as e:
         st.error(f"Erro ao inicializar Gemini: {e}")
 
+# Conexão gsheets
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
     conn = None
-    st.error(f"Erro ao inicializar conexão gsheets: {e}")
 
 def carregar_dados(sheet_name, colunas_padrao):
     chave_session = f"data_{sheet_name}"
     if chave_session not in st.session_state:
         st.session_state[chave_session] = pd.DataFrame(columns=colunas_padrao)
         
-        if conn and spreadsheet_url:
-            try:
-                df = conn.read(spreadsheet=spreadsheet_url, worksheet=sheet_name, ttl="0s")
-                if df is not None and not df.empty:
-                    st.session_state[chave_session] = df
-            except Exception as e:
-                st.error(f"Erro ao ler aba '{sheet_name}': {e}")
+        # Método 1: Leitura via endpoint CSV do Google Viz (Infaível para leitura)
+        url_csv = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+        try:
+            df = pd.read_csv(url_csv)
+            if df is not None and not df.empty:
+                st.session_state[chave_session] = df
+        except Exception:
+            # Método 2: Fallback via gsheets connection
+            if conn:
+                try:
+                    df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, ttl="0s")
+                    if df is not None and not df.empty:
+                        st.session_state[chave_session] = df
+                except Exception as e:
+                    st.error(f"Não foi possível carregar a aba '{sheet_name}'. Verifique os nomes das abas na planilha.")
                 
     return st.session_state[chave_session]
 
 def salvar_dados(sheet_name, df):
     st.session_state[f"data_{sheet_name}"] = df
-    if conn and spreadsheet_url:
+    if conn:
         try:
-            conn.update(spreadsheet=spreadsheet_url, worksheet=sheet_name, data=df)
+            conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df)
             st.toast("Dados sincronizados com o Google Sheets!")
         except Exception as e:
             st.toast(f"Salvo localmente (Erro Sheets: {e})")
@@ -129,34 +130,35 @@ with aba_estoque:
         
         if not df_estoque.empty:
             with st.expander("🛠️ Gerenciar / Editar / Excluir Item"):
-                lista_itens = [f"{idx}: {row['Espécie']} ({row['Tipo']})" for idx, row in df_estoque.iterrows()]
-                item_sel = st.selectbox("Selecione o item:", lista_itens)
-                idx_sel = int(item_sel.split(":")[0])
-                
-                row_atual = df_estoque.loc[idx_sel]
-                
-                with st.form("form_edit_madeira"):
-                    ed_especie = st.text_input("Espécie", value=str(row_atual.get("Espécie", "")))
-                    ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"], 
-                                           index=["Corpo", "Braço", "Escala", "Tampo", "Outro"].index(row_atual.get("Tipo", "Corpo")) if row_atual.get("Tipo") in ["Corpo", "Braço", "Escala", "Tampo", "Outro"] else 0)
-                    ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual.get("Quantidade", 1)))
-                    ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual.get("Preço Un. (R$)", 0.0)))
+                lista_itens = [f"{idx}: {row['Espécie']} ({row['Tipo']})" for idx, row in df_estoque.iterrows() if "Espécie" in row and "Tipo" in row]
+                if lista_itens:
+                    item_sel = st.selectbox("Selecione o item:", lista_itens)
+                    idx_sel = int(item_sel.split(":")[0])
                     
-                    c_salvar, c_excluir = st.columns(2)
-                    btn_alterar = c_salvar.form_submit_button("💾 Salvar Alterações")
-                    btn_apagar = c_excluir.form_submit_button("🗑️ Excluir Item")
+                    row_atual = df_estoque.loc[idx_sel]
                     
-                    if btn_alterar:
-                        df_estoque.loc[idx_sel] = [ed_especie, ed_tipo, ed_qtd, ed_preco]
-                        salvar_dados("Estoque", df_estoque)
-                        st.success("Item atualizado!")
-                        st.rerun()
+                    with st.form("form_edit_madeira"):
+                        ed_especie = st.text_input("Espécie", value=str(row_atual.get("Espécie", "")))
+                        ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"], 
+                                               index=["Corpo", "Braço", "Escala", "Tampo", "Outro"].index(row_atual.get("Tipo", "Corpo")) if row_atual.get("Tipo") in ["Corpo", "Braço", "Escala", "Tampo", "Outro"] else 0)
+                        ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual.get("Quantidade", 1)))
+                        ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual.get("Preço Un. (R$)", 0.0)))
                         
-                    if btn_apagar:
-                        df_estoque = df_estoque.drop(idx_sel).reset_index(drop=True)
-                        salvar_dados("Estoque", df_estoque)
-                        st.warning("Item removido!")
-                        st.rerun()
+                        c_salvar, c_excluir = st.columns(2)
+                        btn_alterar = c_salvar.form_submit_button("💾 Salvar Alterações")
+                        btn_apagar = c_excluir.form_submit_button("🗑️ Excluir Item")
+                        
+                        if btn_alterar:
+                            df_estoque.loc[idx_sel] = [ed_especie, ed_tipo, ed_qtd, ed_preco]
+                            salvar_dados("Estoque", df_estoque)
+                            st.success("Item atualizado!")
+                            st.rerun()
+                            
+                        if btn_apagar:
+                            df_estoque = df_estoque.drop(idx_sel).reset_index(drop=True)
+                            salvar_dados("Estoque", df_estoque)
+                            st.warning("Item removido!")
+                            st.rerun()
 
     with col2:
         st.subheader("Adicionar Madeira")
