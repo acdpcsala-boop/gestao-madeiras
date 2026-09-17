@@ -453,6 +453,7 @@ with aba_financeiro:
     if not df_fin.empty:
         st.dataframe(df_fin, use_container_width=True)
         
-        # Filtra pendências usando variável auxiliar limpa
-        tem_status = "status" in df_fin.columns
-        df_pendentes = df
+        # Filtragem segura de pendências sem linhas longas
+        tem_st = "status" in df_fin.columns
+        if tem_st:
+          
