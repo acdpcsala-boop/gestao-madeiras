@@ -56,8 +56,8 @@ st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 # -----------------------------------------------------------------------------
 SPREADSHEET_ID = "1M6pESyTnevYJvt1sOpJ36rnMLNzvX5WiUySLL61qo"
 
-# COLE A SUA URL DO GOOGLE APPS SCRIPT DENTRO DAS ASPAS ABAIXO:
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbrUnl3XPWGEIIMd1Nqgz4PlgI1MmZ1EZhVzwMebukzRVMx-4wsxe7F-znUCvgPMA/exec"
+# IMPORTANTE: Cole a URL completa da sua implantação do Apps Script abaixo
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbrUnl3XPWGEIIMd1Nqgz4PlgI1MmZIEZhVzwMebukzRVMx-4wsxe7F-znUCvgPMA/exec"
 
 raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
 gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
@@ -97,13 +97,13 @@ def salvar_dados(sheet_name, df):
                 "sheet": sheet_name,
                 "rows": rows
             }
-            res = requests.post(WEB_APP_URL, data=json.dumps(payload), headers={"Content-Type": "application/json"})
+            res = requests.post(WEB_APP_URL, json=payload, timeout=10)
             if res.status_code == 200:
-                st.toast("✅ Sincronizado no Google Sheets!")
+                st.toast("✅ Salvo com sucesso no Google Sheets!")
             else:
-                st.toast(f"⚠️ Salvo na sessão (Erro ao gravar no Sheets)")
+                st.toast(f"⚠️ Salvo apenas localmente (Erro HTTP {res.status_code})")
         except Exception as e:
-            st.toast(f"Salvo localmente (Erro: {e})")
+            st.toast(f"⚠️ Salvo apenas localmente (Erro: {e})")
 
 # -----------------------------------------------------------------------------
 # Navegação por Abas
