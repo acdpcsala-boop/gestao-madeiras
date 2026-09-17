@@ -57,7 +57,7 @@ st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 SPREADSHEET_ID = "1M6pESyTnevYJvt1sOpJ36rnMLNzvX5WiUySLL61qo"
 
 # IMPORTANTE: Cole a URL completa da sua implantação do Apps Script abaixo
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbrUnl3XPWGEIIMd1Nqgz4PlgI1MmZIEZhVzwMebukzRVMx-4wsxe7F-znUCvgPMA/exec"
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbrUnl3XPWGEIIMd1Nqgz4PlgI1MmZ1EZhVzwMebukzRVMx-4wsxe7F-znUCvgPMA/exec"
 
 raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
 gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
