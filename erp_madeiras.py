@@ -450,7 +450,5 @@ with aba_financeiro:
             st.bar_chart(resumo_tipo)
 
     st.subheader("📋 Lançamentos e Contas")
-    if df_fin.empty:
-        st.info("Nenhum lançamento financeiro registrado ainda.")
-    else:
-
+    if not df_fin.empty:
+        st.dataframe(df_fin.drop(columns=["id"], errors="ignore"), use_c
