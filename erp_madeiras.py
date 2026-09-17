@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from google import genai
-from streamlit_gsheets import GSheetsConnection
+import requests
+import json
 import os
 
 # -----------------------------------------------------------------------------
@@ -51,10 +52,12 @@ st.sidebar.markdown("---")
 st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 
 # -----------------------------------------------------------------------------
-# Configuração do ID da Planilha e Conexões
+# Configuração de IDs e URLs
 # -----------------------------------------------------------------------------
 SPREADSHEET_ID = "1M6pESyTnevYJvt1sOpJ36rnMLNzvX5WiUySLL61qo"
-SPREADSHEET_URL = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+
+# COLE A SUA URL DO GOOGLE APPS SCRIPT DENTRO DAS ASPAS ABAIXO:
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbrUnl3XPWGEIIMd1Nqgz4PlgI1MmZ1EZhVzwMebukzRVMx-4wsxe7F-znUCvgPMA/exec"
 
 raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
 gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
@@ -66,23 +69,14 @@ if gemini_api_key:
     except Exception as e:
         st.error(f"Erro ao inicializar Gemini: {e}")
 
-# Conexão gsheets
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-except Exception as e:
-    conn = None
-
 def carregar_dados(sheet_name, colunas_padrao):
     chave_session = f"data_{sheet_name}"
     if chave_session not in st.session_state:
         df_base = pd.DataFrame(columns=colunas_padrao)
-        
-        # Leitura tolerante a falhas
+        url_csv = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
         try:
-            url_csv = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
             df = pd.read_csv(url_csv)
             if df is not None and not df.empty and len(df.columns) > 0:
-                # Garante que os nomes das colunas estejam alinhados
                 for col in colunas_padrao:
                     if col not in df.columns:
                         df[col] = None
@@ -90,31 +84,26 @@ def carregar_dados(sheet_name, colunas_padrao):
             else:
                 st.session_state[chave_session] = df_base
         except Exception:
-            if conn:
-                try:
-                    df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, ttl="0s")
-                    if df is not None and not df.empty:
-                        for col in colunas_padrao:
-                            if col not in df.columns:
-                                df[col] = None
-                        st.session_state[chave_session] = df[colunas_padrao]
-                    else:
-                        st.session_state[chave_session] = df_base
-                except Exception:
-                    st.session_state[chave_session] = df_base
-            else:
-                st.session_state[chave_session] = df_base
+            st.session_state[chave_session] = df_base
                 
     return st.session_state[chave_session]
 
 def salvar_dados(sheet_name, df):
     st.session_state[f"data_{sheet_name}"] = df
-    if conn:
+    if WEB_APP_URL and "COLE_AQUI" not in WEB_APP_URL:
         try:
-            conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df)
-            st.toast("Dados sincronizados com o Google Sheets!")
+            rows = df.fillna("").values.tolist()
+            payload = {
+                "sheet": sheet_name,
+                "rows": rows
+            }
+            res = requests.post(WEB_APP_URL, data=json.dumps(payload), headers={"Content-Type": "application/json"})
+            if res.status_code == 200:
+                st.toast("✅ Sincronizado no Google Sheets!")
+            else:
+                st.toast(f"⚠️ Salvo na sessão (Erro ao gravar no Sheets)")
         except Exception as e:
-            st.toast(f"Salvo localmente (Erro Sheets: {e})")
+            st.toast(f"Salvo localmente (Erro: {e})")
 
 # -----------------------------------------------------------------------------
 # Navegação por Abas
