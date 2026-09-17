@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# Inicialização do Banco de Dados SQLite (Local & Instantâneo)
+# Inicialização e Migração Segura do Banco de Dados SQLite
 # -----------------------------------------------------------------------------
 DB_FILE = "luthieria.db"
 
@@ -73,24 +73,29 @@ def init_db():
         )
     ''')
     
-    # Migração automática de colunas para tabelas existentes
-    c.execute("PRAGMA table_info(financeiro)")
-    colunas_fin = [col[1] for col in c.fetchall()]
-    if "vencimento" not in colunas_fin:
+    # Garantir que colunas novas existam caso o banco seja antigo
+    try:
         c.execute("ALTER TABLE financeiro ADD COLUMN vencimento TEXT")
-    if "categoria" not in colunas_fin:
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
         c.execute("ALTER TABLE financeiro ADD COLUMN categoria TEXT")
-    if "status" not in colunas_fin:
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
         c.execute("ALTER TABLE financeiro ADD COLUMN status TEXT DEFAULT 'Pago'")
+    except sqlite3.OperationalError:
+        pass
     
     conn.commit()
     conn.close()
 
-# Executa criação/atualização do banco
 init_db()
 
 # -----------------------------------------------------------------------------
-# Autenticação Simples Nativa
+# Autenticação
 # -----------------------------------------------------------------------------
 if "usuario_logado" not in st.session_state:
     st.session_state.usuario_logado = False
@@ -115,7 +120,7 @@ if not st.session_state.usuario_logado:
     st.stop()
 
 # =============================================================================
-# ÁREA LOGADA DO SISTEMA ERP
+# ÁREA LOGADA
 # =============================================================================
 
 st.sidebar.title(f"👤 Olá, {st.session_state.get('nome_usuario', 'Alexandre')}")
@@ -126,7 +131,7 @@ if st.sidebar.button("🚪 Sair"):
 st.sidebar.markdown("---")
 st.title("🎸 Carreiro Guitars - Sistema de Gestão ERP")
 
-# Configuração do Gemini
+# Configuração Gemini
 raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
 gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
 
@@ -137,9 +142,6 @@ if gemini_api_key:
     except Exception as e:
         st.error(f"Erro ao inicializar Gemini: {e}")
 
-# -----------------------------------------------------------------------------
-# Navegação por Abas
-# -----------------------------------------------------------------------------
 aba_os, aba_estoque, aba_maquinas, aba_financeiro, aba_ia = st.tabs([
     "📋 Ordens de Serviço",
     "🪵 Estoque & Madeiras", 
@@ -155,10 +157,7 @@ with aba_os:
     st.header("📋 Gerenciamento de Ordens de Serviço (OS)")
     
     conn = sqlite3.connect(DB_FILE)
-    df_os = pd.read_sql_query(
-        "SELECT id, cliente AS 'Cliente', telefone AS 'Telefone', instrumento AS 'Instrumento', servico AS 'Serviço', valor AS 'Valor (R$)', data_entrada AS 'Entrada', prazo AS 'Prazo', status AS 'Status' FROM ordens_servico", 
-        conn
-    )
+    df_os = pd.read_sql_query("SELECT * FROM ordens_servico", conn)
     conn.close()
 
     col_os_list, col_os_cad = st.columns([2, 1])
@@ -171,7 +170,7 @@ with aba_os:
             st.dataframe(df_os.drop(columns=["id"]), use_container_width=True)
             
             with st.expander("🛠️ Atualizar Status / Baixa em OS"):
-                os_dict = {f"OS #{row['id']}: {row['Cliente']} - {row['Instrumento']} ({row['Status']})": row['id'] for _, row in df_os.iterrows()}
+                os_dict = {f"OS #{row['id']}: {row['cliente']} - {row['instrumento']} ({row['status']})": row['id'] for _, row in df_os.iterrows()}
                 os_sel_label = st.selectbox("Selecione a OS:", list(os_dict.keys()))
                 os_id = os_dict[os_sel_label]
                 
@@ -179,8 +178,7 @@ with aba_os:
                 
                 novo_status = st.selectbox(
                     "Novo Status", 
-                    ["Em Fila", "Em Andamento", "Aguardando Peça", "Pronto para Retirada", "Entregue"],
-                    index=["Em Fila", "Em Andamento", "Aguardando Peça", "Pronto para Retirada", "Entregue"].index(row_os["Status"]) if row_os["Status"] in ["Em Fila", "Em Andamento", "Aguardando Peça", "Pronto para Retirada", "Entregue"] else 0
+                    ["Em Fila", "Em Andamento", "Aguardando Peça", "Pronto para Retirada", "Entregue"]
                 )
                 
                 c_att, c_lancar, c_del_os = st.columns(3)
@@ -193,12 +191,12 @@ with aba_os:
                     st.toast("✅ Status da OS atualizado!")
                     st.rerun()
                     
-                if c_lancar.button("💰 Lançar no Financeiro (Como Receita)"):
+                if c_lancar.button("💰 Lançar no Financeiro"):
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
                     c.execute(
                         "INSERT INTO financeiro (data, vencimento, tipo, categoria, descricao, valor, status) VALUES (date('now'), date('now'), 'Receita', 'Serviço de Luthieria', ?, ?, 'Pago')",
-                        (f"OS #{os_id} - {row_os['Cliente']} ({row_os['Serviço']})", float(row_os['Valor (R$)']))
+                        (f"OS #{os_id} - {row_os['cliente']} ({row_os['servico']})", float(row_os['valor']))
                     )
                     conn.commit()
                     conn.close()
@@ -219,8 +217,8 @@ with aba_os:
         with st.form("form_nova_os"):
             cliente_os = st.text_input("Nome do Cliente")
             tel_os = st.text_input("Telefone / WhatsApp")
-            inst_os = st.text_input("Instrumento (ex: Fender Stratocaster, Tagima Millenium)")
-            serv_os = st.text_area("Serviço Solicitado (ex: Regulagem completa, Troca de trastes inox)")
+            inst_os = st.text_input("Instrumento")
+            serv_os = st.text_area("Serviço Solicitado")
             val_os = st.number_input("Valor Combinado (R$)", min_value=0.0, step=20.0, value=150.0)
             
             c_d1, c_d2 = st.columns(2)
@@ -243,42 +241,42 @@ with aba_os:
                     st.warning("Preencha o cliente e o instrumento.")
 
 # -----------------------------------------------------------------------------
-# ABA 2: Estoque de Madeiras (com Alerta de Estoque Baixo)
+# ABA 2: Estoque de Madeiras
 # -----------------------------------------------------------------------------
 with aba_estoque:
     st.header("Estoque de Madeiras e Insumos")
     
     conn = sqlite3.connect(DB_FILE)
-    df_estoque = pd.read_sql_query("SELECT id, especie AS 'Espécie', tipo AS 'Tipo', quantidade AS 'Quantidade', preco_un AS 'Preço Un. (R$)' FROM estoque", conn)
+    df_estoque = pd.read_sql_query("SELECT * FROM estoque", conn)
     conn.close()
     
-    # Alerta de Estoque Baixo
     if not df_estoque.empty:
-        baixo_estoque = df_estoque[df_estoque["Quantidade"] <= 2]
+        baixo_estoque = df_estoque[df_estoque["quantidade"] <= 2]
         if not baixo_estoque.empty:
-            items_str = ", ".join([f"{row['Espécie']} ({row['Quantidade']} un)" for _, row in baixo_estoque.iterrows()])
+            items_str = ", ".join([f"{row['especie']} ({row['quantidade']} un)" for _, row in baixo_estoque.iterrows()])
             st.error(f"⚠️ **Atenção: Itens com estoque baixo (<= 2 un):** {items_str}")
             
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.subheader("Itens Cadastrados")
-        st.dataframe(df_estoque.drop(columns=["id"]), use_container_width=True)
-        
-        if not df_estoque.empty:
+        if df_estoque.empty:
+            st.info("Nenhum item cadastrado no estoque.")
+        else:
+            st.dataframe(df_estoque.drop(columns=["id"]), use_container_width=True)
+            
             with st.expander("🛠️ Gerenciar / Editar / Excluir Item"):
-                itens_dict = {f"ID {row['id']}: {row['Espécie']} ({row['Tipo']})": row['id'] for _, row in df_estoque.iterrows()}
+                itens_dict = {f"ID {row['id']}: {row['especie']} ({row['tipo']})": row['id'] for _, row in df_estoque.iterrows()}
                 item_sel_label = st.selectbox("Selecione o item:", list(itens_dict.keys()))
                 item_id = itens_dict[item_sel_label]
                 
                 row_atual = df_estoque[df_estoque["id"] == item_id].iloc[0]
                 
                 with st.form("form_edit_madeira"):
-                    ed_especie = st.text_input("Espécie", value=str(row_atual["Espécie"]))
-                    ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"], 
-                                           index=["Corpo", "Braço", "Escala", "Tampo", "Outro"].index(row_atual["Tipo"]) if row_atual["Tipo"] in ["Corpo", "Braço", "Escala", "Tampo", "Outro"] else 0)
-                    ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual["Quantidade"]))
-                    ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual["Preço Un. (R$)"]))
+                    ed_especie = st.text_input("Espécie", value=str(row_atual["especie"]))
+                    ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"])
+                    ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual["quantidade"]))
+                    ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual["preco_un"]))
                     
                     c_salvar, c_excluir = st.columns(2)
                     btn_alterar = c_salvar.form_submit_button("💾 Salvar Alterações")
@@ -331,7 +329,7 @@ with aba_maquinas:
     st.header("Status e Manutenção de Equipamentos")
     
     conn = sqlite3.connect(DB_FILE)
-    df_maquinas = pd.read_sql_query("SELECT id, nome AS 'Nome', categoria AS 'Categoria', status AS 'Status', descricao AS 'Descrição/Defeito' FROM maquinas", conn)
+    df_maquinas = pd.read_sql_query("SELECT * FROM maquinas", conn)
     conn.close()
     
     col_cad, col_list = st.columns([1, 1])
@@ -364,12 +362,12 @@ with aba_maquinas:
         else:
             for _, row in df_maquinas.iterrows():
                 m_id = row["id"]
-                nome = str(row["Nome"])
-                cat = str(row["Categoria"])
-                status = str(row["Status"])
-                defeito = str(row["Descrição/Defeito"])
+                nome = str(row["nome"])
+                cat = str(row["categoria"])
+                status = str(row["status"])
+                defeito = str(row["descricao"])
                 
-                cor_status = "🔴" if "Quebrada" in status else ("🟡" if "Preventiva" in status else "🟢")
+                cor_status = "🔴" if "Quebrada" in status or "Inoperante" in status else ("🟡" if "Preventiva" in status else "🟢")
                 
                 with st.expander(f"{cor_status} {nome} - {cat}"):
                     st.write(f"**Status:** {status}")
@@ -410,28 +408,55 @@ with aba_maquinas:
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# ABA 4: Fluxo de Caixa / Financeiro (Corrigido)
+# ABA 4: Fluxo de Caixa / Financeiro
 # -----------------------------------------------------------------------------
 with aba_financeiro:
     st.header("Controle Financeiro & Custos Fixos")
     
     conn = sqlite3.connect(DB_FILE)
-    df_fin = pd.read_sql_query(
-        "SELECT id, data AS 'Lançamento', vencimento AS 'Vencimento', tipo AS 'Tipo', categoria AS 'Categoria', descricao AS 'Descrição', valor AS 'Valor (R$)', status AS 'Status' FROM financeiro", 
-        conn
-    )
+    df_fin = pd.read_sql_query("SELECT * FROM financeiro", conn)
     conn.close()
     
-    # Inicialização padrão para evitar NameError caso esteja vazio
     receita_paga = 0.0
     despesa_paga = 0.0
     despesa_pendente = 0.0
     saldo_real = 0.0
 
     if not df_fin.empty:
-        df_fin["Status"] = df_fin["Status"].fillna("Pago")
-        df_fin["Categoria"] = df_fin["Categoria"].fillna("Geral")
-        df_fin["Vencimento"] = df_fin["Vencimento"].fillna(df_fin["Lançamento"])
+        df_fin["status"] = df_fin["status"].fillna("Pago")
+        df_fin["categoria"] = df_fin["categoria"].fillna("Geral")
+        df_fin["vencimento"] = df_fin["vencimento"].fillna(df_fin["data"])
         
-        receita_paga = df_fin[(df_fin["Tipo"] == "Receita") & (df_fin["Status"] == "Pago")]["Valor (R$)"].sum()
-        despesa_paga = df_fin[(df_fin["Tipo"] == "Despesa") & (df_fin["Status"] == "Pago")]["Valor (R$)"].sum()
+        receita_paga = df_fin[(df_fin["tipo"] == "Receita") & (df_fin["status"] == "Pago")]["valor"].sum()
+        despesa_paga = df_fin[(df_fin["tipo"] == "Despesa") & (df_fin["status"] == "Pago")]["valor"].sum()
+        despesa_pendente = df_fin[(df_fin["tipo"] == "Despesa") & (df_fin["status"] == "Pendente")]["valor"].sum()
+        saldo_real = receita_paga - despesa_paga
+
+    # Cards de Métricas (Agora sempre renderizados!)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Receita Realizada", f"R$ {receita_paga:.2f}")
+    c2.metric("Despesas Pagas", f"R$ {despesa_paga:.2f}")
+    c3.metric("A Pagar (Pendente)", f"R$ {despesa_pendente:.2f}", delta=f"-{despesa_pendente:.2f}", delta_color="inverse")
+    c4.metric("Saldo Atual Caixa", f"R$ {saldo_real:.2f}")
+
+    if not df_fin.empty:
+        with st.expander("📊 Gráfico de Receitas vs Despesas", expanded=False):
+            resumo_tipo = df_fin[df_fin["status"] == "Pago"].groupby("tipo")["valor"].sum()
+            st.bar_chart(resumo_tipo)
+
+    st.subheader("📋 Lançamentos e Contas")
+    if df_fin.empty:
+        st.info("Nenhum lançamento financeiro registrado ainda.")
+    else:
+        st.dataframe(df_fin.drop(columns=["id"]), use_container_width=True)
+    
+    df_pendentes = df_fin[df_fin["status"] == "Pendente"] if not df_fin.empty else pd.DataFrame()
+    if not df_pendentes.empty:
+        with st.expander("🔔 Gerenciar Contas Pendentes / Dar Baixa", expanded=True):
+            for _, row in df_pendentes.iterrows():
+                f_id = row["id"]
+                desc = row["descricao"]
+                venc = row["vencimento"] or row["data"]
+                val = row["valor"]
+                
+                col_info,
