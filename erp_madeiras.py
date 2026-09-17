@@ -56,8 +56,8 @@ st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 # -----------------------------------------------------------------------------
 SPREADSHEET_ID = "1M6pESyTnevYJvt1sOpJ36rnMLNzvX5WiUySLL61qo"
 
-# IMPORTANTE: Cole a URL completa da sua implantação do Apps Script abaixo
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbrUnl3XPWGEIIMd1Nqgz4PlgI1MmZ1EZhVzwMebukzRVMx-4wsxe7F-znUCvgPMA/exec"
+# URL da sua implantação do Apps Script
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbrUnl3XPWGEIIMd1Nqgz4PlgI1MmZIEZhVzwMebukzRVMx-4wsxe7F-znUCvgPMA/exec"
 
 raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
 gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
@@ -69,27 +69,28 @@ if gemini_api_key:
     except Exception as e:
         st.error(f"Erro ao inicializar Gemini: {e}")
 
+# -----------------------------------------------------------------------------
+# Funções de Integração com Google Sheets via API
+# -----------------------------------------------------------------------------
 def carregar_dados(sheet_name, colunas_padrao):
-    chave_session = f"data_{sheet_name}"
-    if chave_session not in st.session_state:
-        df_base = pd.DataFrame(columns=colunas_padrao)
-        url_csv = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+    if WEB_APP_URL and "COLE_AQUI" not in WEB_APP_URL:
         try:
-            df = pd.read_csv(url_csv)
-            if df is not None and not df.empty and len(df.columns) > 0:
-                for col in colunas_padrao:
-                    if col not in df.columns:
-                        df[col] = None
-                st.session_state[chave_session] = df[colunas_padrao]
-            else:
-                st.session_state[chave_session] = df_base
-        except Exception:
-            st.session_state[chave_session] = df_base
-                
-    return st.session_state[chave_session]
+            # Faz a requisição na API do Apps Script para ler em tempo real
+            res = requests.get(f"{WEB_APP_URL}?sheet={sheet_name}", timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list) and len(data) > 1:
+                    df = pd.DataFrame(data[1:], columns=data[0])
+                    for col in colunas_padrao:
+                        if col not in df.columns:
+                            df[col] = None
+                    return df[colunas_padrao]
+        except Exception as e:
+            st.toast(f"Erro ao ler planilha: {e}")
+            
+    return pd.DataFrame(columns=colunas_padrao)
 
 def salvar_dados(sheet_name, df):
-    st.session_state[f"data_{sheet_name}"] = df
     if WEB_APP_URL and "COLE_AQUI" not in WEB_APP_URL:
         try:
             rows = df.fillna("").values.tolist()
@@ -101,9 +102,9 @@ def salvar_dados(sheet_name, df):
             if res.status_code == 200:
                 st.toast("✅ Salvo com sucesso no Google Sheets!")
             else:
-                st.toast(f"⚠️ Salvo apenas localmente (Erro HTTP {res.status_code})")
+                st.toast(f"⚠️ Erro ao salvar (HTTP {res.status_code})")
         except Exception as e:
-            st.toast(f"⚠️ Salvo apenas localmente (Erro: {e})")
+            st.toast(f"⚠️ Erro de conexão: {e}")
 
 # -----------------------------------------------------------------------------
 # Navegação por Abas
