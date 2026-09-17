@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 from google import genai
-import requests
-import json
 import os
 
 # -----------------------------------------------------------------------------
@@ -13,6 +12,54 @@ st.set_page_config(
     page_icon="🪵",
     layout="wide"
 )
+
+# -----------------------------------------------------------------------------
+# Inicialização do Banco de Dados SQLite (Local & Instantâneo)
+# -----------------------------------------------------------------------------
+DB_FILE = "luthieria.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Tabela de Estoque
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS estoque (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            especie TEXT,
+            tipo TEXT,
+            quantidade INTEGER,
+            preco_un REAL
+        )
+    ''')
+    
+    # Tabela de Máquinas
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS maquinas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT,
+            categoria TEXT,
+            status TEXT,
+            descricao TEXT
+        )
+    ''')
+    
+    # Tabela Financeira
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS financeiro (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT,
+            tipo TEXT,
+            descricao TEXT,
+            valor REAL
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+# Executa a criação do banco de dados na inicialização
+init_db()
 
 # -----------------------------------------------------------------------------
 # Autenticação Simples Nativa
@@ -30,7 +77,7 @@ if not st.session_state.usuario_logado:
             btn_login = st.form_submit_button("Entrar")
             
             if btn_login:
-                if user_input.strip() == "alexandre" and pass_input == "admin123":
+                if user_input.strip().lower() == "alexandre" and pass_input == "admin123":
                     st.session_state.usuario_logado = True
                     st.session_state.nome_usuario = "Alexandre Carreiro"
                     st.success("Login efetuado com sucesso!")
@@ -51,14 +98,7 @@ if st.sidebar.button("🚪 Sair"):
 st.sidebar.markdown("---")
 st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 
-# -----------------------------------------------------------------------------
-# Configuração de IDs e URLs
-# -----------------------------------------------------------------------------
-SPREADSHEET_ID = "1M6pESyTnevYJvt1sOpJ36rnMLNzvX5WiUySLL61qo"
-
-# URL da sua implantação do Apps Script
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbrUnl3XPWGEIIMd1Nqgz4PlgI1MmZIEZhVzwMebukzRVMx-4wsxe7F-znUCvgPMA/exec"
-
+# Configuração do Gemini
 raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
 gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
 
@@ -68,43 +108,6 @@ if gemini_api_key:
         client = genai.Client(api_key=gemini_api_key)
     except Exception as e:
         st.error(f"Erro ao inicializar Gemini: {e}")
-
-# -----------------------------------------------------------------------------
-# Funções de Integração com Google Sheets via API
-# -----------------------------------------------------------------------------
-def carregar_dados(sheet_name, colunas_padrao):
-    if WEB_APP_URL and "COLE_AQUI" not in WEB_APP_URL:
-        try:
-            # Faz a requisição na API do Apps Script para ler em tempo real
-            res = requests.get(f"{WEB_APP_URL}?sheet={sheet_name}", timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, list) and len(data) > 1:
-                    df = pd.DataFrame(data[1:], columns=data[0])
-                    for col in colunas_padrao:
-                        if col not in df.columns:
-                            df[col] = None
-                    return df[colunas_padrao]
-        except Exception as e:
-            st.toast(f"Erro ao ler planilha: {e}")
-            
-    return pd.DataFrame(columns=colunas_padrao)
-
-def salvar_dados(sheet_name, df):
-    if WEB_APP_URL and "COLE_AQUI" not in WEB_APP_URL:
-        try:
-            rows = df.fillna("").values.tolist()
-            payload = {
-                "sheet": sheet_name,
-                "rows": rows
-            }
-            res = requests.post(WEB_APP_URL, json=payload, timeout=10)
-            if res.status_code == 200:
-                st.toast("✅ Salvo com sucesso no Google Sheets!")
-            else:
-                st.toast(f"⚠️ Erro ao salvar (HTTP {res.status_code})")
-        except Exception as e:
-            st.toast(f"⚠️ Erro de conexão: {e}")
 
 # -----------------------------------------------------------------------------
 # Navegação por Abas
@@ -121,46 +124,54 @@ aba_estoque, aba_maquinas, aba_financeiro, aba_ia = st.tabs([
 # -----------------------------------------------------------------------------
 with aba_estoque:
     st.header("Estoque de Madeiras e Insumos")
-    colunas_estoque = ["Espécie", "Tipo", "Quantidade", "Preço Un. (R$)"]
-    df_estoque = carregar_dados("Estoque", colunas_estoque)
+    
+    conn = sqlite3.connect(DB_FILE)
+    df_estoque = pd.read_sql_query("SELECT id, especie AS 'Espécie', tipo AS 'Tipo', quantidade AS 'Quantidade', preco_un AS 'Preço Un. (R$)' FROM estoque", conn)
+    conn.close()
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.subheader("Itens Cadastrados")
-        st.dataframe(df_estoque, use_container_width=True)
+        st.dataframe(df_estoque.drop(columns=["id"]), use_container_width=True)
         
-        if not df_estoque.empty and len(df_estoque) > 0:
+        if not df_estoque.empty:
             with st.expander("🛠️ Gerenciar / Editar / Excluir Item"):
-                lista_itens = [f"{idx}: {row.get('Espécie', 'Item')} ({row.get('Tipo', 'Tipo')})" for idx, row in df_estoque.iterrows()]
-                if lista_itens:
-                    item_sel = st.selectbox("Selecione o item:", lista_itens)
-                    idx_sel = int(item_sel.split(":")[0])
+                itens_dict = {f"ID {row['id']}: {row['Espécie']} ({row['Tipo']})": row['id'] for _, row in df_estoque.iterrows()}
+                item_sel_label = st.selectbox("Selecione o item:", list(itens_dict.keys()))
+                item_id = itens_dict[item_sel_label]
+                
+                row_atual = df_estoque[df_estoque["id"] == item_id].iloc[0]
+                
+                with st.form("form_edit_madeira"):
+                    ed_especie = st.text_input("Espécie", value=str(row_atual["Espécie"]))
+                    ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"], 
+                                           index=["Corpo", "Braço", "Escala", "Tampo", "Outro"].index(row_atual["Tipo"]) if row_atual["Tipo"] in ["Corpo", "Braço", "Escala", "Tampo", "Outro"] else 0)
+                    ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual["Quantidade"]))
+                    ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual["Preço Un. (R$)"]))
                     
-                    row_atual = df_estoque.loc[idx_sel]
+                    c_salvar, c_excluir = st.columns(2)
+                    btn_alterar = c_salvar.form_submit_button("💾 Salvar Alterações")
+                    btn_apagar = c_excluir.form_submit_button("🗑️ Excluir Item")
                     
-                    with st.form("form_edit_madeira"):
-                        ed_especie = st.text_input("Espécie", value=str(row_atual.get("Espécie", "")))
-                        ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"], 
-                                               index=["Corpo", "Braço", "Escala", "Tampo", "Outro"].index(row_atual.get("Tipo", "Corpo")) if row_atual.get("Tipo") in ["Corpo", "Braço", "Escala", "Tampo", "Outro"] else 0)
-                        ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual.get("Quantidade", 1)) if pd.notnull(row_atual.get("Quantidade")) else 1)
-                        ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual.get("Preço Un. (R$)", 0.0)) if pd.notnull(row_atual.get("Preço Un. (R$)")) else 0.0)
+                    if btn_alterar:
+                        conn = sqlite3.connect(DB_FILE)
+                        c = conn.cursor()
+                        c.execute("UPDATE estoque SET especie=?, tipo=?, quantidade=?, preco_un=? WHERE id=?", 
+                                  (ed_especie, ed_tipo, ed_qtd, ed_preco, item_id))
+                        conn.commit()
+                        conn.close()
+                        st.toast("✅ Item atualizado com sucesso!")
+                        st.rerun()
                         
-                        c_salvar, c_excluir = st.columns(2)
-                        btn_alterar = c_salvar.form_submit_button("💾 Salvar Alterações")
-                        btn_apagar = c_excluir.form_submit_button("🗑️ Excluir Item")
-                        
-                        if btn_alterar:
-                            df_estoque.loc[idx_sel] = [ed_especie, ed_tipo, ed_qtd, ed_preco]
-                            salvar_dados("Estoque", df_estoque)
-                            st.success("Item atualizado!")
-                            st.rerun()
-                            
-                        if btn_apagar:
-                            df_estoque = df_estoque.drop(idx_sel).reset_index(drop=True)
-                            salvar_dados("Estoque", df_estoque)
-                            st.warning("Item removido!")
-                            st.rerun()
+                    if btn_apagar:
+                        conn = sqlite3.connect(DB_FILE)
+                        c = conn.cursor()
+                        c.execute("DELETE FROM estoque WHERE id=?", (item_id,))
+                        conn.commit()
+                        conn.close()
+                        st.toast("🗑️ Item removido!")
+                        st.rerun()
 
     with col2:
         st.subheader("Adicionar Madeira")
@@ -171,11 +182,14 @@ with aba_estoque:
             preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=50.0)
             
             if st.form_submit_button("Cadastrar Insumo"):
-                if especie:
-                    novo_item = pd.DataFrame([{"Espécie": especie, "Tipo": tipo, "Quantidade": qtd, "Preço Un. (R$)": preco}])
-                    df_atualizado = pd.concat([df_estoque, novo_item], ignore_index=True)
-                    salvar_dados("Estoque", df_atualizado)
-                    st.success("Item cadastrado com sucesso!")
+                if especie.strip():
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("INSERT INTO estoque (especie, tipo, quantidade, preco_un) VALUES (?, ?, ?, ?)",
+                              (especie.strip(), tipo, qtd, preco))
+                    conn.commit()
+                    conn.close()
+                    st.toast("✅ Madeira cadastrada!")
                     st.rerun()
                 else:
                     st.warning("Preencha o nome da espécie.")
@@ -185,8 +199,10 @@ with aba_estoque:
 # -----------------------------------------------------------------------------
 with aba_maquinas:
     st.header("Status e Manutenção de Equipamentos")
-    colunas_maquinas = ["Nome", "Categoria", "Status", "Descrição/Defeito"]
-    df_maquinas = carregar_dados("Maquinas", colunas_maquinas)
+    
+    conn = sqlite3.connect(DB_FILE)
+    df_maquinas = pd.read_sql_query("SELECT id, nome AS 'Nome', categoria AS 'Categoria', status AS 'Status', descricao AS 'Descrição/Defeito' FROM maquinas", conn)
+    conn.close()
     
     col_cad, col_list = st.columns([1, 1])
     
@@ -199,35 +215,39 @@ with aba_maquinas:
             defeito_maq = st.text_area("Descrição do Defeito / Observação")
             
             if st.form_submit_button("Cadastrar Máquina"):
-                if nome_maq:
-                    nova_maq = pd.DataFrame([{"Nome": nome_maq, "Categoria": categoria_maq, "Status": status_maq, "Descrição/Defeito": defeito_maq}])
-                    df_atualizado = pd.concat([df_maquinas, nova_maq], ignore_index=True)
-                    salvar_dados("Maquinas", df_atualizado)
-                    st.success(f"Máquina '{nome_maq}' cadastrada com sucesso!")
+                if nome_maq.strip():
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("INSERT INTO maquinas (nome, categoria, status, descricao) VALUES (?, ?, ?, ?)",
+                              (nome_maq.strip(), categoria_maq, status_maq, defeito_maq.strip()))
+                    conn.commit()
+                    conn.close()
+                    st.toast(f"✅ Máquina '{nome_maq}' cadastrada!")
                     st.rerun()
                 else:
-                    st.warning("Preencha o nome da máquina para cadastrar.")
+                    st.warning("Preencha o nome da máquina.")
                 
     with col_list:
         st.subheader("Status Das Máquinas e Ferramentas")
         if df_maquinas.empty:
             st.info("Nenhuma máquina cadastrada ainda.")
         else:
-            for idx, row in df_maquinas.iterrows():
-                nome = str(row.get("Nome", f"Equipamento {idx}"))
-                cat = str(row.get("Categoria", "Geral"))
-                status = str(row.get("Status", "Operacional"))
-                defeito = str(row.get("Descrição/Defeito", ""))
+            for _, row in df_maquinas.iterrows():
+                m_id = row["id"]
+                nome = str(row["Nome"])
+                cat = str(row["Categoria"])
+                status = str(row["Status"])
+                defeito = str(row["Descrição/Defeito"])
                 
                 cor_status = "🔴" if "Quebrada" in status else ("🟡" if "Preventiva" in status else "🟢")
                 
                 with st.expander(f"{cor_status} {nome} - {cat}"):
                     st.write(f"**Status:** {status}")
-                    if defeito and defeito.strip() != "nan":
+                    if defeito:
                         st.write(f"**Observação/Defeito:** {defeito}")
                     
                     c_ia, c_del = st.columns([3, 1])
-                    if c_ia.button(f"🔍 Diagnosticar Defeito com IA", key=f"diag_{idx}"):
+                    if c_ia.button(f"🔍 Diagnosticar Defeito com IA", key=f"diag_{m_id}"):
                         if not client:
                             st.error("Chave da API do Gemini não encontrada.")
                         else:
@@ -250,10 +270,13 @@ with aba_maquinas:
                                 except Exception as e:
                                     st.error(f"Erro na análise: {e}")
                     
-                    if c_del.button(f"🗑️ Excluir", key=f"del_maq_{idx}"):
-                        df_maquinas = df_maquinas.drop(idx).reset_index(drop=True)
-                        salvar_dados("Maquinas", df_maquinas)
-                        st.warning(f"Máquina '{nome}' removida!")
+                    if c_del.button(f"🗑️ Excluir", key=f"del_maq_{m_id}"):
+                        conn = sqlite3.connect(DB_FILE)
+                        c = conn.cursor()
+                        c.execute("DELETE FROM maquinas WHERE id=?", (m_id,))
+                        conn.commit()
+                        conn.close()
+                        st.toast(f"🗑️ Máquina '{nome}' removida!")
                         st.rerun()
 
 # -----------------------------------------------------------------------------
@@ -261,11 +284,12 @@ with aba_maquinas:
 # -----------------------------------------------------------------------------
 with aba_financeiro:
     st.header("Controle Financeiro da Luthieria")
-    colunas_fin = ["Data", "Tipo", "Descrição", "Valor (R$)"]
-    df_fin = carregar_dados("Financeiro", colunas_fin)
     
-    if not df_fin.empty and "Valor (R$)" in df_fin.columns:
-        df_fin["Valor (R$)"] = pd.to_numeric(df_fin["Valor (R$)"].astype(str).str.replace(",", "."), errors="coerce").fillna(0.0)
+    conn = sqlite3.connect(DB_FILE)
+    df_fin = pd.read_sql_query("SELECT id, data AS 'Data', tipo AS 'Tipo', descricao AS 'Descrição', valor AS 'Valor (R$)' FROM financeiro", conn)
+    conn.close()
+    
+    if not df_fin.empty:
         receita_total = df_fin[df_fin["Tipo"] == "Receita"]["Valor (R$)"].sum()
         despesa_total = df_fin[df_fin["Tipo"] == "Despesa"]["Valor (R$)"].sum()
         saldo = receita_total - despesa_total
@@ -276,7 +300,7 @@ with aba_financeiro:
         c3.metric("Saldo Líquido", f"R$ {saldo:.2f}", delta=f"{saldo:.2f}")
     
     st.subheader("Lançamentos")
-    st.dataframe(df_fin, use_container_width=True)
+    st.dataframe(df_fin.drop(columns=["id"]), use_container_width=True)
     
     with st.expander("➕ Novo Lançamento Financeiro"):
         with st.form("form_fin"):
@@ -286,11 +310,14 @@ with aba_financeiro:
             val = st.number_input("Valor (R$)", min_value=0.0, step=10.0, value=100.0)
             
             if st.form_submit_button("Salvar Lançamento"):
-                if desc:
-                    novo_lan = pd.DataFrame([{"Data": str(data), "Tipo": tipo_fin, "Descrição": desc, "Valor (R$)": val}])
-                    df_atualizado = pd.concat([df_fin, novo_lan], ignore_index=True)
-                    salvar_dados("Financeiro", df_atualizado)
-                    st.success("Lançamento efetuado com sucesso!")
+                if desc.strip():
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("INSERT INTO financeiro (data, tipo, descricao, valor) VALUES (?, ?, ?, ?)",
+                              (str(data), tipo_fin, desc.strip(), val))
+                    conn.commit()
+                    conn.close()
+                    st.toast("✅ Lançamento gravado!")
                     st.rerun()
                 else:
                     st.warning("Preencha a descrição do lançamento.")
