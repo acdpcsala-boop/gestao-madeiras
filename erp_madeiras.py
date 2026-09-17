@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# Inicialização e Migração Segura do Banco de Dados SQLite
+# Inicialização do Banco de Dados SQLite
 # -----------------------------------------------------------------------------
 DB_FILE = "luthieria.db"
 
@@ -73,7 +73,7 @@ def init_db():
         )
     ''')
     
-    # Migrações para colunas extras em bancos já existentes
+    # Migrações para colunas extras em bancos antigos
     for cmd in [
         "ALTER TABLE financeiro ADD COLUMN vencimento TEXT",
         "ALTER TABLE financeiro ADD COLUMN categoria TEXT",
@@ -452,7 +452,7 @@ with aba_financeiro:
     st.subheader("📋 Lançamentos e Contas")
     if not df_fin.empty:
         st.dataframe(df_fin, use_container_width=True)
-    else:
-        st.info("Nenhum lançamento financeiro registrado ainda.")
-    
-    df_pendentes = df_fin[df_fin["st
+        
+        # Filtra pendências usando variável auxiliar limpa
+        tem_status = "status" in df_fin.columns
+        df_pendentes = df
