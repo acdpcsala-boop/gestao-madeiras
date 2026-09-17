@@ -75,23 +75,35 @@ except Exception as e:
 def carregar_dados(sheet_name, colunas_padrao):
     chave_session = f"data_{sheet_name}"
     if chave_session not in st.session_state:
-        st.session_state[chave_session] = pd.DataFrame(columns=colunas_padrao)
+        df_base = pd.DataFrame(columns=colunas_padrao)
         
-        # Método 1: Leitura via endpoint CSV do Google Viz (Infaível para leitura)
-        url_csv = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+        # Leitura tolerante a falhas
         try:
+            url_csv = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
             df = pd.read_csv(url_csv)
-            if df is not None and not df.empty:
-                st.session_state[chave_session] = df
+            if df is not None and not df.empty and len(df.columns) > 0:
+                # Garante que os nomes das colunas estejam alinhados
+                for col in colunas_padrao:
+                    if col not in df.columns:
+                        df[col] = None
+                st.session_state[chave_session] = df[colunas_padrao]
+            else:
+                st.session_state[chave_session] = df_base
         except Exception:
-            # Método 2: Fallback via gsheets connection
             if conn:
                 try:
                     df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, ttl="0s")
                     if df is not None and not df.empty:
-                        st.session_state[chave_session] = df
-                except Exception as e:
-                    st.error(f"Não foi possível carregar a aba '{sheet_name}'. Verifique os nomes das abas na planilha.")
+                        for col in colunas_padrao:
+                            if col not in df.columns:
+                                df[col] = None
+                        st.session_state[chave_session] = df[colunas_padrao]
+                    else:
+                        st.session_state[chave_session] = df_base
+                except Exception:
+                    st.session_state[chave_session] = df_base
+            else:
+                st.session_state[chave_session] = df_base
                 
     return st.session_state[chave_session]
 
@@ -115,7 +127,7 @@ aba_estoque, aba_maquinas, aba_financeiro, aba_ia = st.tabs([
 ])
 
 # -----------------------------------------------------------------------------
-# ABA 1: Estoque de Madeiras (Com Edição e Exclusão)
+# ABA 1: Estoque de Madeiras
 # -----------------------------------------------------------------------------
 with aba_estoque:
     st.header("Estoque de Madeiras e Insumos")
@@ -128,9 +140,9 @@ with aba_estoque:
         st.subheader("Itens Cadastrados")
         st.dataframe(df_estoque, use_container_width=True)
         
-        if not df_estoque.empty:
+        if not df_estoque.empty and len(df_estoque) > 0:
             with st.expander("🛠️ Gerenciar / Editar / Excluir Item"):
-                lista_itens = [f"{idx}: {row['Espécie']} ({row['Tipo']})" for idx, row in df_estoque.iterrows() if "Espécie" in row and "Tipo" in row]
+                lista_itens = [f"{idx}: {row.get('Espécie', 'Item')} ({row.get('Tipo', 'Tipo')})" for idx, row in df_estoque.iterrows()]
                 if lista_itens:
                     item_sel = st.selectbox("Selecione o item:", lista_itens)
                     idx_sel = int(item_sel.split(":")[0])
@@ -141,8 +153,8 @@ with aba_estoque:
                         ed_especie = st.text_input("Espécie", value=str(row_atual.get("Espécie", "")))
                         ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"], 
                                                index=["Corpo", "Braço", "Escala", "Tampo", "Outro"].index(row_atual.get("Tipo", "Corpo")) if row_atual.get("Tipo") in ["Corpo", "Braço", "Escala", "Tampo", "Outro"] else 0)
-                        ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual.get("Quantidade", 1)))
-                        ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual.get("Preço Un. (R$)", 0.0)))
+                        ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual.get("Quantidade", 1)) if pd.notnull(row_atual.get("Quantidade")) else 1)
+                        ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual.get("Preço Un. (R$)", 0.0)) if pd.notnull(row_atual.get("Preço Un. (R$)")) else 0.0)
                         
                         c_salvar, c_excluir = st.columns(2)
                         btn_alterar = c_salvar.form_submit_button("💾 Salvar Alterações")
