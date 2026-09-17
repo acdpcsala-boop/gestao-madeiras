@@ -16,10 +16,13 @@ st.set_page_config(
 st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 
 # -----------------------------------------------------------------------------
-# Configuração das Conexões (Google Sheets e Gemini API)
+# Limpeza e Tratamento das Variáveis vindas do Secrets (Trata quebras de linha)
 # -----------------------------------------------------------------------------
-spreadsheet_url = st.secrets.get("SPREADSHEET_URL")
-gemini_api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+raw_url = st.secrets.get("SPREADSHEET_URL", "")
+spreadsheet_url = "".join(raw_url.split()) if raw_url else None
+
+raw_key = st.secrets.get("GEMINI_API_KEY", "")
+gemini_api_key = "".join(raw_key.split()) or os.environ.get("GEMINI_API_KEY")
 
 client = None
 if gemini_api_key:
@@ -35,29 +38,29 @@ except Exception:
     conn = None
 
 def carregar_dados(sheet_name, colunas_padrao):
-    if conn and spreadsheet_url:
-        try:
-            df = conn.read(spreadsheet=spreadsheet_url, worksheet=sheet_name, ttl="0s")
-            if df.empty:
-                return pd.DataFrame(columns=colunas_padrao)
-            return df
-        except Exception:
-            return pd.DataFrame(columns=colunas_padrao)
-    else:
-        chave_session = f"data_{sheet_name}"
-        if chave_session not in st.session_state:
-            st.session_state[chave_session] = pd.DataFrame(columns=colunas_padrao)
-        return st.session_state[chave_session]
+    chave_session = f"data_{sheet_name}"
+    if chave_session not in st.session_state:
+        st.session_state[chave_session] = pd.DataFrame(columns=colunas_padrao)
+        
+        # Tenta buscar da planilha se configurado
+        if conn and spreadsheet_url:
+            try:
+                df = conn.read(spreadsheet=spreadsheet_url, worksheet=sheet_name, ttl="0s")
+                if not df.empty:
+                    st.session_state[chave_session] = df
+            except Exception:
+                pass
+                
+    return st.session_state[chave_session]
 
 def salvar_dados(sheet_name, df):
+    st.session_state[f"data_{sheet_name}"] = df
     if conn and spreadsheet_url:
         try:
             conn.update(spreadsheet=spreadsheet_url, worksheet=sheet_name, data=df)
-            st.success("Salvo na planilha com sucesso!")
+            st.toast("Salvo na planilha do Google Sheets!")
         except Exception as e:
-            st.error(f"Erro ao salvar na planilha: {e}")
-    else:
-        st.session_state[f"data_{sheet_name}"] = df
+            st.toast(f"Salvo localmente (Erro ao sync com Sheets: {e})")
 
 # -----------------------------------------------------------------------------
 # Navegação por Abas
@@ -96,6 +99,7 @@ with aba_estoque:
                     novo_item = pd.DataFrame([{"Espécie": especie, "Tipo": tipo, "Quantidade": qtd, "Preço Un. (R$)": preco}])
                     df_atualizado = pd.concat([df_estoque, novo_item], ignore_index=True)
                     salvar_dados("Estoque", df_atualizado)
+                    st.success("Item cadastrado com sucesso!")
                     st.rerun()
                 else:
                     st.warning("Preencha o nome da espécie.")
@@ -123,19 +127,20 @@ with aba_maquinas:
                     nova_maq = pd.DataFrame([{"Nome": nome_maq, "Categoria": categoria_maq, "Status": status_maq, "Descrição/Defeito": defeito_maq}])
                     df_atualizado = pd.concat([df_maquinas, nova_maq], ignore_index=True)
                     salvar_dados("Maquinas", df_atualizado)
+                    st.success(f"Máquina '{nome_maq}' cadastrada com sucesso!")
                     st.rerun()
                 else:
-                    st.warning("Preencha o nome da máquina.")
+                    st.warning("Preencha o nome da máquina para cadastrar.")
                 
     with col_list:
         st.subheader("Status Das Máquinas e Ferramentas")
         if df_maquinas.empty:
-            st.info("Nenhuma máquina cadastrada ainda.")
+            st.info("Nenhuma máquina cadastrada ainda. Cadastre um item no formulário ao lado.")
         else:
             for idx, row in df_maquinas.iterrows():
-                nome = str(row.get("Nome", ""))
-                cat = str(row.get("Categoria", ""))
-                status = str(row.get("Status", ""))
+                nome = str(row.get("Nome", f"Equipamento {idx}"))
+                cat = str(row.get("Categoria", "Geral"))
+                status = str(row.get("Status", "Operacional"))
                 defeito = str(row.get("Descrição/Defeito", ""))
                 
                 cor_status = "🔴" if "Quebrada" in status else ("🟡" if "Preventiva" in status else "🟢")
@@ -147,7 +152,7 @@ with aba_maquinas:
                     
                     if st.button(f"🔍 Diagnosticar Defeito com IA", key=f"diag_{idx}"):
                         if not client:
-                            st.error("Chave da API do Gemini não configurada.")
+                            st.error("Chave da API do Gemini não encontrada.")
                         else:
                             prompt = (
                                 f"Você é um técnico especialista em manutenção de máquinas para marcenaria e luthieria. "
@@ -202,6 +207,7 @@ with aba_financeiro:
                     novo_lan = pd.DataFrame([{"Data": str(data), "Tipo": tipo_fin, "Descrição": desc, "Valor (R$)": val}])
                     df_atualizado = pd.concat([df_fin, novo_lan], ignore_index=True)
                     salvar_dados("Financeiro", df_atualizado)
+                    st.success("Lançamento efetuado com sucesso!")
                     st.rerun()
                 else:
                     st.warning("Preencha a descrição do lançamento.")
