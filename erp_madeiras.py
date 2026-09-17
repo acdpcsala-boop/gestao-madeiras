@@ -44,14 +44,17 @@ def init_db():
         )
     ''')
     
-    # Tabela Financeira
+    # Tabela Financeira Atualizada (com Vencimento e Status)
     c.execute('''
         CREATE TABLE IF NOT EXISTS financeiro (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             data TEXT,
+            vencimento TEXT,
             tipo TEXT,
+            categoria TEXT,
             descricao TEXT,
-            valor REAL
+            valor REAL,
+            status TEXT DEFAULT 'Pago'
         )
     ''')
     
@@ -280,44 +283,92 @@ with aba_maquinas:
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# ABA 3: Fluxo de Caixa / Financeiro
+# ABA 3: Fluxo de Caixa / Financeiro (Atualizado com Contas a Pagar)
 # -----------------------------------------------------------------------------
 with aba_financeiro:
-    st.header("Controle Financeiro da Luthieria")
+    st.header("Controle Financeiro & Custos Fixos")
     
     conn = sqlite3.connect(DB_FILE)
-    df_fin = pd.read_sql_query("SELECT id, data AS 'Data', tipo AS 'Tipo', descricao AS 'Descrição', valor AS 'Valor (R$)' FROM financeiro", conn)
+    df_fin = pd.read_sql_query(
+        "SELECT id, data AS 'Lançamento', vencimento AS 'Vencimento', tipo AS 'Tipo', categoria AS 'Categoria', descricao AS 'Descrição', valor AS 'Valor (R$)', status AS 'Status' FROM financeiro", 
+        conn
+    )
     conn.close()
     
     if not df_fin.empty:
-        receita_total = df_fin[df_fin["Tipo"] == "Receita"]["Valor (R$)"].sum()
-        despesa_total = df_fin[df_fin["Tipo"] == "Despesa"]["Valor (R$)"].sum()
-        saldo = receita_total - despesa_total
+        receita_paga = df_fin[(df_fin["Tipo"] == "Receita") & (df_fin["Status"] == "Pago")]["Valor (R$)"].sum()
+        despesa_paga = df_fin[(df_fin["Tipo"] == "Despesa") & (df_fin["Status"] == "Pago")]["Valor (R$)"].sum()
+        despesa_pendente = df_fin[(df_fin["Tipo"] == "Despesa") & (df_fin["Status"] == "Pendente")]["Valor (R$)"].sum()
+        saldo_real = receita_paga - despesa_paga
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Receita Bruta", f"R$ {receita_total:.2f}")
-        c2.metric("Despesas Totais", f"R$ {despesa_total:.2f}")
-        c3.metric("Saldo Líquido", f"R$ {saldo:.2f}", delta=f"{saldo:.2f}")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Receita Realizada", f"R$ {receita_paga:.2f}")
+        c2.metric("Despesas Pagas", f"R$ {despesa_paga:.2f}")
+        c3.metric("A Pagar (Pendente)", f"R$ {despesa_pendente:.2f}", delta=f"-{despesa_pendente:.2f}", delta_color="inverse")
+        c4.metric("Saldo Atual Caixa", f"R$ {saldo_real:.2f}")
     
-    st.subheader("Lançamentos")
+    st.subheader("📋 Lançamentos e Contas")
+    
+    # Exibe tabela formatada sem a coluna ID interna
     st.dataframe(df_fin.drop(columns=["id"]), use_container_width=True)
     
-    with st.expander("➕ Novo Lançamento Financeiro"):
+    # Seção para gerenciar contas pendentes
+    df_pendentes = df_fin[df_fin["Status"] == "Pendente"]
+    if not df_pendentes.empty:
+        with st.expander("🔔 Gerenciar Contas Pendentes / Dar Baixa", expanded=True):
+            for _, row in df_pendentes.iterrows():
+                f_id = row["id"]
+                desc = row["Descrição"]
+                venc = row["Vencimento"] or row["Lançamento"]
+                val = row["Valor (R$)"]
+                
+                col_info, col_btn, col_excl = st.columns([3, 1.5, 1])
+                col_info.write(f"📌 **{desc}** ({row['Categoria']}) - Vencimento: `{venc}` - **R$ {val:.2f}**")
+                
+                if col_btn.button("✅ Confirmar Pagamento", key=f"baixa_{f_id}"):
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("UPDATE financeiro SET status='Pago' WHERE id=?", (f_id,))
+                    conn.commit()
+                    conn.close()
+                    st.toast(f"✅ Conta '{desc}' marcada como Paga!")
+                    st.rerun()
+                    
+                if col_excl.button("🗑️", key=f"del_fin_{f_id}"):
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("DELETE FROM financeiro WHERE id=?", (f_id,))
+                    conn.commit()
+                    conn.close()
+                    st.toast("Removido!")
+                    st.rerun()
+
+    # Formulário para novo lançamento / conta
+    with st.expander("➕ Novo Lançamento / Adicionar Conta Fixa"):
         with st.form("form_fin"):
-            data = st.date_input("Data")
-            tipo_fin = st.selectbox("Tipo", ["Receita", "Despesa"])
-            desc = st.text_input("Descrição")
+            c_f1, c_f2 = st.columns(2)
+            data_lan = c_f1.date_input("Data do Lançamento")
+            data_venc = c_f2.date_input("Data de Vencimento (para custos fixos/contas)")
+            
+            c_f3, c_f4, c_f5 = st.columns(3)
+            tipo_fin = c_f3.selectbox("Tipo", ["Despesa", "Receita"])
+            categoria_fin = c_f4.selectbox("Categoria", ["Custo Fixo (Aluguel, Luz, etc)", "Insumos/Madeira", "Ferramentas", "Serviço de Luthieria", "Outro"])
+            status_fin = c_f5.selectbox("Status", ["Pendente", "Pago"])
+            
+            desc = st.text_input("Descrição (ex: Conta de Luz - Setembro, Aluguel do Ateliê)")
             val = st.number_input("Valor (R$)", min_value=0.0, step=10.0, value=100.0)
             
-            if st.form_submit_button("Salvar Lançamento"):
+            if st.form_submit_button("Salvar Registro"):
                 if desc.strip():
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
-                    c.execute("INSERT INTO financeiro (data, tipo, descricao, valor) VALUES (?, ?, ?, ?)",
-                              (str(data), tipo_fin, desc.strip(), val))
+                    c.execute(
+                        "INSERT INTO financeiro (data, vencimento, tipo, categoria, descricao, valor, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (str(data_lan), str(data_venc), tipo_fin, categoria_fin, desc.strip(), val, status_fin)
+                    )
                     conn.commit()
                     conn.close()
-                    st.toast("✅ Lançamento gravado!")
+                    st.toast("✅ Lançamento registrado com sucesso!")
                     st.rerun()
                 else:
                     st.warning("Preencha a descrição do lançamento.")
