@@ -73,21 +73,16 @@ def init_db():
         )
     ''')
     
-    # Garantir que colunas novas existam caso o banco seja antigo
-    try:
-        c.execute("ALTER TABLE financeiro ADD COLUMN vencimento TEXT")
-    except sqlite3.OperationalError:
-        pass
-        
-    try:
-        c.execute("ALTER TABLE financeiro ADD COLUMN categoria TEXT")
-    except sqlite3.OperationalError:
-        pass
-        
-    try:
-        c.execute("ALTER TABLE financeiro ADD COLUMN status TEXT DEFAULT 'Pago'")
-    except sqlite3.OperationalError:
-        pass
+    # Adiciona colunas ausentes em bancos legados
+    for instrucao in [
+        "ALTER TABLE financeiro ADD COLUMN vencimento TEXT",
+        "ALTER TABLE financeiro ADD COLUMN categoria TEXT",
+        "ALTER TABLE financeiro ADD COLUMN status TEXT DEFAULT 'Pago'"
+    ]:
+        try:
+            c.execute(instrucao)
+        except sqlite3.OperationalError:
+            pass # Coluna já existe
     
     conn.commit()
     conn.close()
@@ -95,7 +90,7 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# Autenticação
+# Autenticação Simples Nativa
 # -----------------------------------------------------------------------------
 if "usuario_logado" not in st.session_state:
     st.session_state.usuario_logado = False
@@ -120,7 +115,7 @@ if not st.session_state.usuario_logado:
     st.stop()
 
 # =============================================================================
-# ÁREA LOGADA
+# ÁREA LOGADA DO SISTEMA ERP
 # =============================================================================
 
 st.sidebar.title(f"👤 Olá, {st.session_state.get('nome_usuario', 'Alexandre')}")
@@ -131,7 +126,7 @@ if st.sidebar.button("🚪 Sair"):
 st.sidebar.markdown("---")
 st.title("🎸 Carreiro Guitars - Sistema de Gestão ERP")
 
-# Configuração Gemini
+# Configuração do Gemini
 raw_gemini = st.secrets.get("GEMINI_API_KEY", "")
 gemini_api_key = str(raw_gemini).replace("\n", "").replace("\r", "").strip() or os.environ.get("GEMINI_API_KEY")
 
@@ -142,6 +137,9 @@ if gemini_api_key:
     except Exception as e:
         st.error(f"Erro ao inicializar Gemini: {e}")
 
+# -----------------------------------------------------------------------------
+# Navegação por Abas
+# -----------------------------------------------------------------------------
 aba_os, aba_estoque, aba_maquinas, aba_financeiro, aba_ia = st.tabs([
     "📋 Ordens de Serviço",
     "🪵 Estoque & Madeiras", 
@@ -167,10 +165,10 @@ with aba_os:
         if df_os.empty:
             st.info("Nenhuma Ordem de Serviço cadastrada.")
         else:
-            st.dataframe(df_os.drop(columns=["id"]), use_container_width=True)
+            st.dataframe(df_os.drop(columns=["id"], errors="ignore"), use_container_width=True)
             
             with st.expander("🛠️ Atualizar Status / Baixa em OS"):
-                os_dict = {f"OS #{row['id']}: {row['cliente']} - {row['instrumento']} ({row['status']})": row['id'] for _, row in df_os.iterrows()}
+                os_dict = {f"OS #{row['id']}: {row.get('cliente', '')} - {row.get('instrumento', '')} ({row.get('status', '')})": row['id'] for _, row in df_os.iterrows()}
                 os_sel_label = st.selectbox("Selecione a OS:", list(os_dict.keys()))
                 os_id = os_dict[os_sel_label]
                 
@@ -196,7 +194,7 @@ with aba_os:
                     c = conn.cursor()
                     c.execute(
                         "INSERT INTO financeiro (data, vencimento, tipo, categoria, descricao, valor, status) VALUES (date('now'), date('now'), 'Receita', 'Serviço de Luthieria', ?, ?, 'Pago')",
-                        (f"OS #{os_id} - {row_os['cliente']} ({row_os['servico']})", float(row_os['valor']))
+                        (f"OS #{os_id} - {row_os.get('cliente', '')} ({row_os.get('servico', '')})", float(row_os.get('valor', 0)))
                     )
                     conn.commit()
                     conn.close()
@@ -250,10 +248,10 @@ with aba_estoque:
     df_estoque = pd.read_sql_query("SELECT * FROM estoque", conn)
     conn.close()
     
-    if not df_estoque.empty:
+    if not df_estoque.empty and "quantidade" in df_estoque.columns:
         baixo_estoque = df_estoque[df_estoque["quantidade"] <= 2]
         if not baixo_estoque.empty:
-            items_str = ", ".join([f"{row['especie']} ({row['quantidade']} un)" for _, row in baixo_estoque.iterrows()])
+            items_str = ", ".join([f"{row.get('especie', '')} ({row.get('quantidade', 0)} un)" for _, row in baixo_estoque.iterrows()])
             st.error(f"⚠️ **Atenção: Itens com estoque baixo (<= 2 un):** {items_str}")
             
     col1, col2 = st.columns([2, 1])
@@ -263,20 +261,20 @@ with aba_estoque:
         if df_estoque.empty:
             st.info("Nenhum item cadastrado no estoque.")
         else:
-            st.dataframe(df_estoque.drop(columns=["id"]), use_container_width=True)
+            st.dataframe(df_estoque.drop(columns=["id"], errors="ignore"), use_container_width=True)
             
             with st.expander("🛠️ Gerenciar / Editar / Excluir Item"):
-                itens_dict = {f"ID {row['id']}: {row['especie']} ({row['tipo']})": row['id'] for _, row in df_estoque.iterrows()}
+                itens_dict = {f"ID {row['id']}: {row.get('especie', '')} ({row.get('tipo', '')})": row['id'] for _, row in df_estoque.iterrows()}
                 item_sel_label = st.selectbox("Selecione o item:", list(itens_dict.keys()))
                 item_id = itens_dict[item_sel_label]
                 
                 row_atual = df_estoque[df_estoque["id"] == item_id].iloc[0]
                 
                 with st.form("form_edit_madeira"):
-                    ed_especie = st.text_input("Espécie", value=str(row_atual["especie"]))
+                    ed_especie = st.text_input("Espécie", value=str(row_atual.get("especie", "")))
                     ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"])
-                    ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual["quantidade"]))
-                    ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual["preco_un"]))
+                    ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual.get("quantidade", 1)))
+                    ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual.get("preco_un", 0.0)))
                     
                     c_salvar, c_excluir = st.columns(2)
                     btn_alterar = c_salvar.form_submit_button("💾 Salvar Alterações")
@@ -362,10 +360,10 @@ with aba_maquinas:
         else:
             for _, row in df_maquinas.iterrows():
                 m_id = row["id"]
-                nome = str(row["nome"])
-                cat = str(row["categoria"])
-                status = str(row["status"])
-                defeito = str(row["descricao"])
+                nome = str(row.get("nome", ""))
+                cat = str(row.get("categoria", ""))
+                status = str(row.get("status", ""))
+                defeito = str(row.get("descricao", ""))
                 
                 cor_status = "🔴" if "Quebrada" in status or "Inoperante" in status else ("🟡" if "Preventiva" in status else "🟢")
                 
@@ -423,6 +421,13 @@ with aba_financeiro:
     saldo_real = 0.0
 
     if not df_fin.empty:
+        if "status" not in df_fin.columns:
+            df_fin["status"] = "Pago"
+        if "categoria" not in df_fin.columns:
+            df_fin["categoria"] = "Geral"
+        if "vencimento" not in df_fin.columns:
+            df_fin["vencimento"] = df_fin["data"]
+            
         df_fin["status"] = df_fin["status"].fillna("Pago")
         df_fin["categoria"] = df_fin["categoria"].fillna("Geral")
         df_fin["vencimento"] = df_fin["vencimento"].fillna(df_fin["data"])
@@ -432,7 +437,7 @@ with aba_financeiro:
         despesa_pendente = df_fin[(df_fin["tipo"] == "Despesa") & (df_fin["status"] == "Pendente")]["valor"].sum()
         saldo_real = receita_paga - despesa_paga
 
-    # Cards de Métricas (Agora sempre renderizados!)
+    # Metrics
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Receita Realizada", f"R$ {receita_paga:.2f}")
     c2.metric("Despesas Pagas", f"R$ {despesa_paga:.2f}")
@@ -446,17 +451,4 @@ with aba_financeiro:
 
     st.subheader("📋 Lançamentos e Contas")
     if df_fin.empty:
-        st.info("Nenhum lançamento financeiro registrado ainda.")
-    else:
-        st.dataframe(df_fin.drop(columns=["id"]), use_container_width=True)
-    
-    df_pendentes = df_fin[df_fin["status"] == "Pendente"] if not df_fin.empty else pd.DataFrame()
-    if not df_pendentes.empty:
-        with st.expander("🔔 Gerenciar Contas Pendentes / Dar Baixa", expanded=True):
-            for _, row in df_pendentes.iterrows():
-                f_id = row["id"]
-                desc = row["descricao"]
-                venc = row["vencimento"] or row["data"]
-                val = row["valor"]
-                
-                col_info,
+        st.info("Nenhum lançamento financeiro registrado 
