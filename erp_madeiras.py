@@ -3,6 +3,7 @@ import pandas as pd
 from google import genai
 from streamlit_gsheets import GSheetsConnection
 import os
+import re
 
 # -----------------------------------------------------------------------------
 # Configuração da Página
@@ -49,13 +50,17 @@ if st.sidebar.button("🚪 Sair"):
     st.rerun()
 
 st.sidebar.markdown("---")
-
 st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 
 # -----------------------------------------------------------------------------
-# Configuração das Conexões (Tratamento Limpo dos Secrets)
+# Configuração das Conexões (Tratamento Robusto da URL)
 # -----------------------------------------------------------------------------
-spreadsheet_url = st.secrets.get("SPREADSHEET_URL", "").strip()
+raw_url = st.secrets.get("SPREADSHEET_URL", "").strip()
+
+# Extrai apenas a estrutura base da URL até o ID da planilha, ignorando parâmetros como /edit#gid=0
+match = re.search(r"(https://docs\.google\.com/spreadsheets/d/[a-zA-Z0-9-_]+)", raw_url)
+spreadsheet_url = match.group(1) if match else raw_url
+
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY")
 
 client = None
@@ -83,7 +88,7 @@ def carregar_dados(sheet_name, colunas_padrao):
                 if df is not None and not df.empty:
                     st.session_state[chave_session] = df
             except Exception as e:
-                st.error(f"Erro ao ler aba '{sheet_name}' no Sheets: {e}")
+                st.error(f"Erro ao ler aba '{sheet_name}': {e}")
                 
     return st.session_state[chave_session]
 
@@ -92,9 +97,9 @@ def salvar_dados(sheet_name, df):
     if conn and spreadsheet_url:
         try:
             conn.update(spreadsheet=spreadsheet_url, worksheet=sheet_name, data=df)
-            st.toast("Salvo na planilha do Google Sheets!")
+            st.toast("Dados sincronizados com o Google Sheets!")
         except Exception as e:
-            st.toast(f"Erro ao sincronizar com Sheets: {e}")
+            st.toast(f"Salvo localmente (Erro Sheets: {e})")
 
 # -----------------------------------------------------------------------------
 # Navegação por Abas
@@ -107,7 +112,7 @@ aba_estoque, aba_maquinas, aba_financeiro, aba_ia = st.tabs([
 ])
 
 # -----------------------------------------------------------------------------
-# ABA 1: Estoque de Madeiras
+# ABA 1: Estoque de Madeiras (Com Edição e Exclusão)
 # -----------------------------------------------------------------------------
 with aba_estoque:
     st.header("Estoque de Madeiras e Insumos")
@@ -120,6 +125,38 @@ with aba_estoque:
         st.subheader("Itens Cadastrados")
         st.dataframe(df_estoque, use_container_width=True)
         
+        # Gerenciamento de Itens (Editar/Excluir)
+        if not df_estoque.empty:
+            with st.expander("🛠️ Gerenciar / Editar / Excluir Item"):
+                lista_itens = [f"{idx}: {row['Espécie']} ({row['Tipo']})" for idx, row in df_estoque.iterrows()]
+                item_sel = st.selectbox("Selecione o item:", lista_itens)
+                idx_sel = int(item_sel.split(":")[0])
+                
+                row_atual = df_estoque.loc[idx_sel]
+                
+                with st.form("form_edit_madeira"):
+                    ed_especie = st.text_input("Espécie", value=str(row_atual.get("Espécie", "")))
+                    ed_tipo = st.selectbox("Destinação", ["Corpo", "Braço", "Escala", "Tampo", "Outro"], 
+                                           index=["Corpo", "Braço", "Escala", "Tampo", "Outro"].index(row_atual.get("Tipo", "Corpo")) if row_atual.get("Tipo") in ["Corpo", "Braço", "Escala", "Tampo", "Outro"] else 0)
+                    ed_qtd = st.number_input("Quantidade", min_value=1, step=1, value=int(row_atual.get("Quantidade", 1)))
+                    ed_preco = st.number_input("Preço Unitário (R$)", min_value=0.0, step=5.0, value=float(row_atual.get("Preço Un. (R$)", 0.0)))
+                    
+                    c_salvar, c_excluir = st.columns(2)
+                    btn_alterar = c_salvar.form_submit_button("💾 Salvar Alterações")
+                    btn_apagar = c_excluir.form_submit_button("🗑️ Excluir Item")
+                    
+                    if btn_alterar:
+                        df_estoque.loc[idx_sel] = [ed_especie, ed_tipo, ed_qtd, ed_preco]
+                        salvar_dados("Estoque", df_estoque)
+                        st.success("Item atualizado!")
+                        st.rerun()
+                        
+                    if btn_apagar:
+                        df_estoque = df_estoque.drop(idx_sel).reset_index(drop=True)
+                        salvar_dados("Estoque", df_estoque)
+                        st.warning("Item removido!")
+                        st.rerun()
+
     with col2:
         st.subheader("Adicionar Madeira")
         with st.form("form_madeira"):
@@ -139,7 +176,7 @@ with aba_estoque:
                     st.warning("Preencha o nome da espécie.")
 
 # -----------------------------------------------------------------------------
-# ABA 2: Máquinas & Ferramentas
+# ABA 2: Máquinas & Ferramentas (Com Edição e Exclusão)
 # -----------------------------------------------------------------------------
 with aba_maquinas:
     st.header("Status e Manutenção de Equipamentos")
@@ -184,7 +221,8 @@ with aba_maquinas:
                     if defeito and defeito.strip() != "nan":
                         st.write(f"**Observação/Defeito:** {defeito}")
                     
-                    if st.button(f"🔍 Diagnosticar Defeito com IA", key=f"diag_{idx}"):
+                    c_ia, c_del = st.columns([3, 1])
+                    if c_ia.button(f"🔍 Diagnosticar Defeito com IA", key=f"diag_{idx}"):
                         if not client:
                             st.error("Chave da API do Gemini não encontrada.")
                         else:
@@ -206,6 +244,12 @@ with aba_maquinas:
                                     st.info(response.text)
                                 except Exception as e:
                                     st.error(f"Erro na análise: {e}")
+                    
+                    if c_del.button(f"🗑️ Excluir", key=f"del_maq_{idx}"):
+                        df_maquinas = df_maquinas.drop(idx).reset_index(drop=True)
+                        salvar_dados("Maquinas", df_maquinas)
+                        st.warning(f"Máquina '{nome}' removida!")
+                        st.rerun()
 
 # -----------------------------------------------------------------------------
 # ABA 3: Fluxo de Caixa / Financeiro
