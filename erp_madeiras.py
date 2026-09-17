@@ -58,7 +58,7 @@ def init_db():
         )
     ''')
 
-    # Tabela de Ordens de Serviço (Nova)
+    # Tabela de Ordens de Serviço
     c.execute('''
         CREATE TABLE IF NOT EXISTS ordens_servico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -410,7 +410,7 @@ with aba_maquinas:
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# ABA 4: Fluxo de Caixa / Financeiro (com Gráficos)
+# ABA 4: Fluxo de Caixa / Financeiro (Corrigido)
 # -----------------------------------------------------------------------------
 with aba_financeiro:
     st.header("Controle Financeiro & Custos Fixos")
@@ -422,6 +422,12 @@ with aba_financeiro:
     )
     conn.close()
     
+    # Inicialização padrão para evitar NameError caso esteja vazio
+    receita_paga = 0.0
+    despesa_paga = 0.0
+    despesa_pendente = 0.0
+    saldo_real = 0.0
+
     if not df_fin.empty:
         df_fin["Status"] = df_fin["Status"].fillna("Pago")
         df_fin["Categoria"] = df_fin["Categoria"].fillna("Geral")
@@ -429,5 +435,3 @@ with aba_financeiro:
         
         receita_paga = df_fin[(df_fin["Tipo"] == "Receita") & (df_fin["Status"] == "Pago")]["Valor (R$)"].sum()
         despesa_paga = df_fin[(df_fin["Tipo"] == "Despesa") & (df_fin["Status"] == "Pago")]["Valor (R$)"].sum()
-        despesa_pendente = df_fin[(df_fin["Tipo"] == "Despesa") & (df_fin["Status"] == "Pendente")]["Valor (R$)"].sum()
-        saldo_real = receita_pa
