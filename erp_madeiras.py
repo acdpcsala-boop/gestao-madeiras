@@ -73,24 +73,24 @@ def init_db():
         )
     ''')
     
-    # Adiciona colunas ausentes em bancos legados
-    for instrucao in [
+    # Migrações para colunas extras em bancos já existentes
+    for cmd in [
         "ALTER TABLE financeiro ADD COLUMN vencimento TEXT",
         "ALTER TABLE financeiro ADD COLUMN categoria TEXT",
         "ALTER TABLE financeiro ADD COLUMN status TEXT DEFAULT 'Pago'"
     ]:
         try:
-            c.execute(instrucao)
+            c.execute(cmd)
         except sqlite3.OperationalError:
             pass
-    
+            
     conn.commit()
     conn.close()
 
 init_db()
 
 # -----------------------------------------------------------------------------
-# Autenticação Simples Nativa
+# Autenticação
 # -----------------------------------------------------------------------------
 if "usuario_logado" not in st.session_state:
     st.session_state.usuario_logado = False
@@ -115,7 +115,7 @@ if not st.session_state.usuario_logado:
     st.stop()
 
 # =============================================================================
-# ÁREA LOGADA DO SISTEMA ERP
+# ÁREA LOGADA
 # =============================================================================
 
 st.sidebar.title(f"👤 Olá, {st.session_state.get('nome_usuario', 'Alexandre')}")
@@ -165,7 +165,7 @@ with aba_os:
         if df_os.empty:
             st.info("Nenhuma Ordem de Serviço cadastrada.")
         else:
-            st.dataframe(df_os.drop(columns=["id"], errors="ignore"), use_container_width=True)
+            st.dataframe(df_os, use_container_width=True)
             
             with st.expander("🛠️ Atualizar Status / Baixa em OS"):
                 os_dict = {f"OS #{row['id']}: {row.get('cliente', '')} - {row.get('instrumento', '')} ({row.get('status', '')})": row['id'] for _, row in df_os.iterrows()}
@@ -261,7 +261,7 @@ with aba_estoque:
         if df_estoque.empty:
             st.info("Nenhum item cadastrado no estoque.")
         else:
-            st.dataframe(df_estoque.drop(columns=["id"], errors="ignore"), use_container_width=True)
+            st.dataframe(df_estoque, use_container_width=True)
             
             with st.expander("🛠️ Gerenciar / Editar / Excluir Item"):
                 itens_dict = {f"ID {row['id']}: {row.get('especie', '')} ({row.get('tipo', '')})": row['id'] for _, row in df_estoque.iterrows()}
@@ -451,4 +451,8 @@ with aba_financeiro:
 
     st.subheader("📋 Lançamentos e Contas")
     if not df_fin.empty:
-        st.dataframe(df_fin.drop(columns=["id"], errors="ignore"), use_c
+        st.dataframe(df_fin, use_container_width=True)
+    else:
+        st.info("Nenhum lançamento financeiro registrado ainda.")
+    
+    df_pendentes = df_fin[df_fin["st
