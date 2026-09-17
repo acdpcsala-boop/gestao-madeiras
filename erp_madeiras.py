@@ -44,7 +44,7 @@ def init_db():
         )
     ''')
     
-    # Tabela Financeira Atualizada (com Vencimento e Status)
+    # Tabela Financeira
     c.execute('''
         CREATE TABLE IF NOT EXISTS financeiro (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,10 +58,21 @@ def init_db():
         )
     ''')
     
+    # Migração automática de banco existente (adiciona novas colunas caso não existam)
+    c.execute("PRAGMA table_info(financeiro)")
+    colunas_existentes = [col[1] for col in c.fetchall()]
+    
+    if "vencimento" not in colunas_existentes:
+        c.execute("ALTER TABLE financeiro ADD COLUMN vencimento TEXT")
+    if "categoria" not in colunas_existentes:
+        c.execute("ALTER TABLE financeiro ADD COLUMN categoria TEXT")
+    if "status" not in colunas_existentes:
+        c.execute("ALTER TABLE financeiro ADD COLUMN status TEXT DEFAULT 'Pago'")
+    
     conn.commit()
     conn.close()
 
-# Executa a criação do banco de dados na inicialização
+# Executa a criação/migração do banco de dados na inicialização
 init_db()
 
 # -----------------------------------------------------------------------------
@@ -283,7 +294,7 @@ with aba_maquinas:
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# ABA 3: Fluxo de Caixa / Financeiro (Atualizado com Contas a Pagar)
+# ABA 3: Fluxo de Caixa / Financeiro
 # -----------------------------------------------------------------------------
 with aba_financeiro:
     st.header("Controle Financeiro & Custos Fixos")
@@ -296,6 +307,11 @@ with aba_financeiro:
     conn.close()
     
     if not df_fin.empty:
+        # Trata valores nulos antigos caso existam no banco
+        df_fin["Status"] = df_fin["Status"].fillna("Pago")
+        df_fin["Categoria"] = df_fin["Categoria"].fillna("Geral")
+        df_fin["Vencimento"] = df_fin["Vencimento"].fillna(df_fin["Lançamento"])
+        
         receita_paga = df_fin[(df_fin["Tipo"] == "Receita") & (df_fin["Status"] == "Pago")]["Valor (R$)"].sum()
         despesa_paga = df_fin[(df_fin["Tipo"] == "Despesa") & (df_fin["Status"] == "Pago")]["Valor (R$)"].sum()
         despesa_pendente = df_fin[(df_fin["Tipo"] == "Despesa") & (df_fin["Status"] == "Pendente")]["Valor (R$)"].sum()
@@ -309,11 +325,10 @@ with aba_financeiro:
     
     st.subheader("📋 Lançamentos e Contas")
     
-    # Exibe tabela formatada sem a coluna ID interna
     st.dataframe(df_fin.drop(columns=["id"]), use_container_width=True)
     
     # Seção para gerenciar contas pendentes
-    df_pendentes = df_fin[df_fin["Status"] == "Pendente"]
+    df_pendentes = df_fin[df_fin["Status"] == "Pendente"] if not df_fin.empty else pd.DataFrame()
     if not df_pendentes.empty:
         with st.expander("🔔 Gerenciar Contas Pendentes / Dar Baixa", expanded=True):
             for _, row in df_pendentes.iterrows():
