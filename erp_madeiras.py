@@ -82,7 +82,7 @@ def init_db():
         try:
             c.execute(instrucao)
         except sqlite3.OperationalError:
-            pass # Coluna já existe
+            pass
     
     conn.commit()
     conn.close()
@@ -451,4 +451,6 @@ with aba_financeiro:
 
     st.subheader("📋 Lançamentos e Contas")
     if df_fin.empty:
-        st.info("Nenhum lançamento financeiro registrado 
+        st.info("Nenhum lançamento financeiro registrado ainda.")
+    else:
+
