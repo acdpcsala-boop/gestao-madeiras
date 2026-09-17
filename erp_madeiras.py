@@ -53,13 +53,10 @@ st.sidebar.markdown("---")
 st.title("🪵 Sistema Integrado de Gestão - Madeiras & Luthieria")
 
 # -----------------------------------------------------------------------------
-# Configuração das Conexões (Tratamento de Strings do Secrets)
+# Configuração das Conexões (Tratamento Limpo dos Secrets)
 # -----------------------------------------------------------------------------
-raw_url = st.secrets.get("SPREADSHEET_URL", "")
-spreadsheet_url = "".join(raw_url.split()) if raw_url else None
-
-raw_key = st.secrets.get("GEMINI_API_KEY", "")
-gemini_api_key = "".join(raw_key.split()) or os.environ.get("GEMINI_API_KEY")
+spreadsheet_url = st.secrets.get("SPREADSHEET_URL", "").strip()
+gemini_api_key = st.secrets.get("GEMINI_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY")
 
 client = None
 if gemini_api_key:
@@ -71,8 +68,9 @@ if gemini_api_key:
 # Conexão com Google Sheets
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-except Exception:
+except Exception as e:
     conn = None
+    st.error(f"Erro ao inicializar conexão gsheets: {e}")
 
 def carregar_dados(sheet_name, colunas_padrao):
     chave_session = f"data_{sheet_name}"
@@ -82,10 +80,10 @@ def carregar_dados(sheet_name, colunas_padrao):
         if conn and spreadsheet_url:
             try:
                 df = conn.read(spreadsheet=spreadsheet_url, worksheet=sheet_name, ttl="0s")
-                if not df.empty:
+                if df is not None and not df.empty:
                     st.session_state[chave_session] = df
-            except Exception:
-                pass
+            except Exception as e:
+                st.error(f"Erro ao ler aba '{sheet_name}' no Sheets: {e}")
                 
     return st.session_state[chave_session]
 
@@ -96,7 +94,7 @@ def salvar_dados(sheet_name, df):
             conn.update(spreadsheet=spreadsheet_url, worksheet=sheet_name, data=df)
             st.toast("Salvo na planilha do Google Sheets!")
         except Exception as e:
-            st.toast(f"Salvo localmente (Erro ao sync com Sheets: {e})")
+            st.toast(f"Erro ao sincronizar com Sheets: {e}")
 
 # -----------------------------------------------------------------------------
 # Navegação por Abas
